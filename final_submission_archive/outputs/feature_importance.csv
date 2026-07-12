@@ -1,0 +1,10 @@
+Crop,Feature,Permutation_Importance_Mean
+Rice_frac,p25_20250619,0.195246
+Rice_frac,p50_20250619,0.144004
+Rice_frac,mean_20250619,0.132561
+Cotton_frac,diff_harvest,0.301756
+Cotton_frac,mean_20250814,0.122991
+Maize_frac,diff_harvest,0.201900
+Bajra_frac,p25_20250619,0.214931
+Groundnut_frac,mean_local_std_20250814,0.287844
+Groundnut_frac,mean_local_std_20250606,0.229453

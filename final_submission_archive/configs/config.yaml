@@ -1,0 +1,19 @@
+# ANRF Crop Mapping Model Configuration
+seed: 42
+resolution: 10.0  # meters
+crs: "EPSG:32643"  # UTM Zone 43N
+imputer:
+  knn_neighbors: 6
+  spatial_neighbors: 1
+targets:
+  - Rice_frac
+  - Cotton_frac
+  - Maize_frac
+  - Bajra_frac
+  - Groundnut_frac
+models:
+  Rice: RandomForestRegressor(n_estimators=100, random_state=42)
+  Cotton: RF (0.8) + CatBoost (0.2)
+  Maize: ExtraTreesRegressor(n_estimators=100, random_state=42)
+  Bajra: ExtraTreesRegressor(n_estimators=100, random_state=42)
+  Groundnut: RandomForestRegressor(n_estimators=100, random_state=42)

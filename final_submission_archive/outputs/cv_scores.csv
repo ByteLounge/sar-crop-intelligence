@@ -1,0 +1,6 @@
+Crop,LOVO_CV_MSE,LOVO_CV_RMSE,Optimal_Imputer,Ensemble_Config
+Rice_frac,0.002604,0.051029,KNN-6,RandomForest (1.0)
+Cotton_frac,0.001049,0.032388,KNN-6,RandomForest (0.8) + CatBoost (0.2)
+Maize_frac,0.001160,0.034059,KNN-6,ExtraTrees (1.0)
+Bajra_frac,0.000639,0.025278,Spatial 1-NN,ExtraTrees (1.0)
+Groundnut_frac,0.001071,0.032726,Spatial 1-NN,RandomForest (1.0)
