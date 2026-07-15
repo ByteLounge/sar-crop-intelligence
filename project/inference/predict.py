@@ -112,14 +112,10 @@ def run_inference():
     # Load Serialized Objects
     models_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models'))
     
-    with open(os.path.join(models_dir, "imputer_knn8.pkl"), "rb") as f:
-        imputer_knn8 = pickle.load(f)
-    with open(os.path.join(models_dir, "imputer_med.pkl"), "rb") as f:
-        imputer_med = pickle.load(f)
+    with open(os.path.join(models_dir, "imputer_knn.pkl"), "rb") as f:
+        imputer_knn = pickle.load(f)
     with open(os.path.join(models_dir, "nn_spatial.pkl"), "rb") as f:
         nn = pickle.load(f)
-    with open(os.path.join(models_dir, "imputer_knn3.pkl"), "rb") as f:
-        imputer_knn3 = pickle.load(f)
     with open(os.path.join(models_dir, "selected_features.pkl"), "rb") as f:
         selected_features = pickle.load(f)
         
@@ -127,15 +123,11 @@ def run_inference():
     sar_cols = [c for c in df_sar.columns if c not in ['ID', 'valid_pixels']]
     all_cols = geom_cols + sar_cols
     
-    # Impute KNN-8 (for Rice)
-    df_final_knn8 = df_data.copy()
-    df_final_knn8[all_cols] = imputer_knn8.transform(df_data[all_cols])
+    # Impute KNN (for Rice, Cotton, Maize)
+    df_final_knn = df_data.copy()
+    df_final_knn[all_cols] = imputer_knn.transform(df_data[all_cols])
     
-    # Impute Median (for Cotton)
-    df_final_med = df_data.copy()
-    df_final_med[all_cols] = imputer_med.transform(df_data[all_cols])
-    
-    # Impute Spatial 1-NN (for Maize, Bajra)
+    # Impute Spatial 1-NN (for Bajra, Groundnut)
     df_final_spatial = df_data.copy()
     train_indices = df_data[df_data['coverage'] > 0.35].index
     zero_cov_indices = df_data[df_data['coverage'] <= 0.35].index
@@ -144,10 +136,6 @@ def run_inference():
         neighbor_idx = train_indices[nn.kneighbors(coord, return_distance=False)[0][0]]
         df_final_spatial.loc[idx, sar_cols] = df_data.loc[neighbor_idx, sar_cols]
         
-    # Impute KNN-3 (for Groundnut)
-    df_final_knn3 = df_data.copy()
-    df_final_knn3[all_cols] = imputer_knn3.transform(df_data[all_cols])
-    
     target_cols = ['Rice_frac', 'Cotton_frac', 'Maize_frac', 'Bajra_frac', 'Groundnut_frac']
     crop_names_ha = ['Rice_ha', 'Cotton_ha', 'Maize_ha', 'Bajra_ha', 'Groundnut_ha']
     
@@ -155,14 +143,10 @@ def run_inference():
     for target in target_cols:
         features_t = selected_features[target]
         
-        if target == 'Rice_frac':
-            df_all = df_final_knn8
-        elif target == 'Cotton_frac':
-            df_all = df_final_med
-        elif target in ['Maize_frac', 'Bajra_frac']:
-            df_all = df_final_spatial
+        if target in ['Rice_frac', 'Cotton_frac', 'Maize_frac']:
+            df_all = df_final_knn
         else:
-            df_all = df_final_knn3
+            df_all = df_final_spatial
             
         X_all_t = df_all[features_t].values
         
@@ -171,11 +155,10 @@ def run_inference():
             ensemble = pickle.load(f)
             
         preds = ensemble.predict(X_all_t)
-        # Apply physical fraction clipping constraint
         preds = np.clip(preds, 0.0, 1.0)
         final_predictions[target] = preds
         
-    df_final = df_final_knn8.copy()
+    df_final = df_final_knn.copy()
     cov = df_final['coverage'].values
     blended_fracs = {}
     for target in target_cols:

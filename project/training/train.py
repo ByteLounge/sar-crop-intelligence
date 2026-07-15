@@ -6,7 +6,7 @@ import geopandas as gpd
 import rasterio
 from rasterio.features import rasterize
 from sklearn.cluster import KMeans
-from sklearn.impute import KNNImputer, SimpleImputer
+from sklearn.impute import KNNImputer
 from sklearn.neighbors import NearestNeighbors
 import pickle
 
@@ -127,17 +127,12 @@ def run_pipeline():
     sar_cols = [c for c in df_sar.columns if c not in ['ID', 'valid_pixels']]
     all_cols = geom_cols + sar_cols
     
-    # 6a. KNN-8 for Rice
-    imputer_knn8 = KNNImputer(n_neighbors=8)
-    df_final_knn8 = df_data.copy()
-    df_final_knn8[all_cols] = imputer_knn8.fit_transform(df_data[all_cols])
+    # 6a. KNN-6 for Rice, Cotton, Maize
+    imputer_knn = KNNImputer(n_neighbors=6)
+    df_final_knn = df_data.copy()
+    df_final_knn[all_cols] = imputer_knn.fit_transform(df_data[all_cols])
     
-    # 6b. Median for Cotton
-    imputer_med = SimpleImputer(strategy='median')
-    df_final_med = df_data.copy()
-    df_final_med[all_cols] = imputer_med.fit_transform(df_data[all_cols])
-    
-    # 6c. Spatial 1-NN for Maize, Bajra
+    # 6b. Spatial 1-NN for Bajra, Groundnut
     df_final_spatial = df_data.copy()
     train_indices = df_data[df_data['coverage'] > 0.35].index
     zero_cov_indices = df_data[df_data['coverage'] <= 0.35].index
@@ -151,24 +146,16 @@ def run_pipeline():
         neighbor_idx = train_indices[nn.kneighbors(coord, return_distance=False)[0][0]]
         df_final_spatial.loc[idx, sar_cols] = df_data.loc[neighbor_idx, sar_cols]
         
-    # 6d. KNN-3 for Groundnut
-    imputer_knn3 = KNNImputer(n_neighbors=3)
-    df_final_knn3 = df_data.copy()
-    df_final_knn3[all_cols] = imputer_knn3.fit_transform(df_data[all_cols])
-    
-    # Filter train sets
-    df_train_knn8 = df_final_knn8[df_final_knn8['coverage'] > 0.35].copy()
-    df_train_med = df_final_med[df_final_med['coverage'] > 0.35].copy()
+    df_train_knn = df_final_knn[df_final_knn['coverage'] > 0.35].copy()
     df_train_spatial = df_final_spatial[df_final_spatial['coverage'] > 0.35].copy()
-    df_train_knn3 = df_final_knn3[df_final_knn3['coverage'] > 0.35].copy()
     
-    # 7. Model Training & Prediction using Crop-specific Selected Features
+    # 7. Model Training & Prediction using Crop-specific Selected Features (No coords to prevent spatial extrapolation errors!)
     selected_features = {
-        'Rice_frac': ['centroid_x', 'centroid_y', 'ratio_veg'],
-        'Cotton_frac': ['centroid_y', 'centroid_x', 'diff_harvest', 'mean_20250606', 'ratio_harvest'],
-        'Maize_frac': ['centroid_y', 'centroid_x', 'mean_sobel_20251013', 'mean_local_std_20250814', 'mean_local_std_20250606', 'mean_sobel_20250814'],
-        'Bajra_frac': ['p25_20250619', 'centroid_x', 'centroid_y', 'temporal_variance', 'p75_20250619'],
-        'Groundnut_frac': ['centroid_x', 'centroid_y', 'area_ha']
+        'Rice_frac': ['area_ha', 'bbox_width', 'ratio_veg', 'p50_20250619'],
+        'Cotton_frac': ['area_ha', 'perimeter', 'diff_harvest', 'mean_20250606', 'ratio_harvest'],
+        'Maize_frac': ['area_ha', 'mean_sobel_20251013', 'mean_local_std_20250814', 'mean_local_std_20250606', 'mean_sobel_20250814'],
+        'Bajra_frac': ['area_ha', 'p25_20250619', 'temporal_variance', 'p75_20250619', 'mean_local_std_20250619'],
+        'Groundnut_frac': ['area_ha', 'perimeter', 'mean_local_std_20250814', 'mean_local_std_20250606', 'change_magnitude']
     }
     
     target_cols = ['Rice_frac', 'Cotton_frac', 'Maize_frac', 'Bajra_frac', 'Groundnut_frac']
@@ -179,14 +166,10 @@ def run_pipeline():
     os.makedirs(models_out_dir, exist_ok=True)
     
     # Save imputers and configs
-    with open(os.path.join(models_out_dir, "imputer_knn8.pkl"), "wb") as f:
-        pickle.dump(imputer_knn8, f)
-    with open(os.path.join(models_out_dir, "imputer_med.pkl"), "wb") as f:
-        pickle.dump(imputer_med, f)
+    with open(os.path.join(models_out_dir, "imputer_knn.pkl"), "wb") as f:
+        pickle.dump(imputer_knn, f)
     with open(os.path.join(models_out_dir, "nn_spatial.pkl"), "wb") as f:
         pickle.dump(nn, f)
-    with open(os.path.join(models_out_dir, "imputer_knn3.pkl"), "wb") as f:
-        pickle.dump(imputer_knn3, f)
     with open(os.path.join(models_out_dir, "selected_features.pkl"), "wb") as f:
         pickle.dump(selected_features, f)
         
@@ -195,18 +178,12 @@ def run_pipeline():
         features_t = selected_features[target]
         
         # Choose correct imputed dataframes
-        if target == 'Rice_frac':
-            df_tr = df_train_knn8
-            df_all = df_final_knn8
-        elif target == 'Cotton_frac':
-            df_tr = df_train_med
-            df_all = df_final_med
-        elif target in ['Maize_frac', 'Bajra_frac']:
+        if target in ['Rice_frac', 'Cotton_frac', 'Maize_frac']:
+            df_tr = df_train_knn
+            df_all = df_final_knn
+        else:
             df_tr = df_train_spatial
             df_all = df_final_spatial
-        else:
-            df_tr = df_train_knn3
-            df_all = df_final_knn3
             
         X_train_t = df_tr[features_t].values
         y_train_t = df_tr[target].values
@@ -216,7 +193,6 @@ def run_pipeline():
         ensemble.fit(X_train_t, y_train_t)
         
         preds = ensemble.predict(X_all_t)
-        # Apply [0.0, 1.0] fraction clipping constraint
         preds = np.clip(preds, 0.0, 1.0)
         final_predictions[target] = preds
         
@@ -225,7 +201,7 @@ def run_pipeline():
             pickle.dump(ensemble, f)
             
     # 8. Blending & Enforcing Physical Constraints
-    df_final = df_final_knn8.copy() # base template
+    df_final = df_final_knn.copy()
     cov = df_final['coverage'].values
     blended_fracs = {}
     for target in target_cols:
