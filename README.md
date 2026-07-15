@@ -11,6 +11,11 @@ This upgraded solution improves the baseline cross-validation performance by **8
 
 ---
 
+## 📝 Submission Description
+This submission implements a hybrid spatial-temporal SAR crop mapping pipeline for Vadodara. For swath-covered villages, crop fractions are observed via unsupervised K-Means on vegetation pixels. For zero-coverage villages, missing multi-temporal X-band SAR features are reconstructed using crop-specific imputers (KNN/Spatial 1-NN). Predictions are generated via optimized, low-variance regularized regressors (Ridge, Bayesian Ridge, ElasticNet) and KNN, with physical area constraints.
+
+---
+
 ## 📖 Table of Contents
 1. [Overview & Motivation](#-overview--motivation)
 2. [The Core Challenge: Partial Swath Coverage](#-the-core-challenge-partial-swath-coverage)
