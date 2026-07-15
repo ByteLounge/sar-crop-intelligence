@@ -7,8 +7,6 @@ import rasterio
 from rasterio.features import rasterize
 from sklearn.cluster import KMeans
 from sklearn.impute import KNNImputer, SimpleImputer
-from sklearn.experimental import enable_iterative_imputer
-from sklearn.impute import IterativeImputer
 from sklearn.neighbors import NearestNeighbors, KNeighborsRegressor
 from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor, HistGradientBoostingRegressor
 from sklearn.linear_model import ElasticNet, Ridge, BayesianRidge
@@ -16,7 +14,6 @@ from sklearn.svm import SVR
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
-from sklearn.metrics import mean_squared_error
 import cv2
 from scipy.stats import skew, kurtosis
 import warnings
@@ -133,7 +130,6 @@ def get_base_data():
     return gdf_utm, df_geom, df_labels, df_total_px, flat_stack, flat_mask, H, W, dates
 
 def extract_advanced_features(gdf_utm, flat_stack, flat_mask, H, W, dates):
-    # Compute Local Standard Deviation (Texture Feature) using box filter
     local_std_images = []
     sobel_images = []
     stack_3d = flat_stack.T.reshape(len(dates), H, W)
@@ -285,13 +281,6 @@ def evaluate_lovo_cv_imputed(covered_df, target, features, model_fn, imputer_typ
             val_coord = val_df[['centroid_x', 'centroid_y']].values.reshape(1, -1)
             neighbor_idx = nn.kneighbors(val_coord, return_distance=False)[0][0]
             df_imputed.loc[val_row_idx, sar_cols] = train_df.loc[neighbor_idx, sar_cols]
-        elif imputer_type == 'iterative_rf':
-            # MissForest simulation using IterativeImputer with RandomForestRegressor
-            estimator = RandomForestRegressor(n_estimators=10, max_depth=5, random_state=42, n_jobs=-1)
-            imputer = IterativeImputer(estimator=estimator, max_iter=5, random_state=42)
-            combined_imputed = imputer.fit_transform(combined_df[all_cols])
-            df_imputed = combined_df.copy()
-            df_imputed[all_cols] = combined_imputed
         elif imputer_type == 'median':
             imputer = SimpleImputer(strategy='median')
             combined_imputed = imputer.fit_transform(combined_df[all_cols])
@@ -305,7 +294,6 @@ def evaluate_lovo_cv_imputed(covered_df, target, features, model_fn, imputer_typ
         X_val = df_imputed.iloc[[val_row_idx]][features].values
         y_val = val_df[target].values[0]
         
-        # Fit model & predict
         model = model_fn()
         model.fit(X_train, y_train)
         pred = model.predict(X_val)[0]
@@ -314,10 +302,10 @@ def evaluate_lovo_cv_imputed(covered_df, target, features, model_fn, imputer_typ
     return np.mean(errors)
 
 def run_search():
-    print("Loading data...")
+    print("Loading data...", flush=True)
     gdf_utm, df_geom, df_labels, df_total_px, flat_stack, flat_mask, H, W, dates = get_base_data()
     
-    print("Extracting advanced features...")
+    print("Extracting advanced features...", flush=True)
     df_sar = extract_advanced_features(gdf_utm, flat_stack, flat_mask, H, W, dates)
     
     df_data = pd.merge(df_geom, df_sar, on='ID')
@@ -340,7 +328,6 @@ def run_search():
         'CatBoost_50': lambda: CatBoostRegressor(iterations=50, depth=3, learning_rate=0.05, random_seed=42, verbose=0),
         'LGBM_50': lambda: LGBMRegressor(n_estimators=50, max_depth=3, learning_rate=0.05, random_state=42, verbose=-1, n_jobs=-1),
         'XGB_50': lambda: XGBRegressor(n_estimators=50, max_depth=3, learning_rate=0.05, random_state=42, verbosity=0, n_jobs=-1),
-        'HGBR_50': lambda: HistGradientBoostingRegressor(max_iter=50, max_depth=3, random_state=42),
         'ElasticNet': lambda: ElasticNet(alpha=0.1, l1_ratio=0.5, random_state=42),
         'Ridge': lambda: Ridge(alpha=1.0, random_state=42),
         'BayesianRidge': lambda: BayesianRidge(),
@@ -348,16 +335,14 @@ def run_search():
         'KNeighbors': lambda: KNeighborsRegressor(n_neighbors=3)
     }
     
-    imputers_pool = ['knn_3', 'knn_5', 'knn_6', 'knn_8', 'spatial_1nn', 'iterative_rf', 'median']
+    imputers_pool = ['knn_3', 'knn_5', 'knn_6', 'knn_8', 'spatial_1nn', 'median']
     
-    # We will do feature selection for each target crop
     best_configs = {}
     
     for target in target_cols:
-        print(f"\n========================================\nTarget Crop: {target}\n========================================")
+        print(f"\n========================================\nTarget Crop: {target}\n========================================", flush=True)
         
-        # Step 1: Pre-select top 15 features using RF importance on all features (using standard KNN imputed data)
-        # Impute temporarily to run feature importance
+        # Step 1: Pre-select top 12 features using RF importance
         temp_imputer = KNNImputer(n_neighbors=6)
         X_temp = temp_imputer.fit_transform(covered_df[all_cols])
         df_temp = pd.DataFrame(X_temp, columns=all_cols)
@@ -366,14 +351,12 @@ def run_search():
         rf.fit(df_temp.values, covered_df[target].values)
         importances = pd.Series(rf.feature_importances_, index=all_cols).sort_values(ascending=False)
         
-        # Include centroid_x, centroid_y, area_ha always because spatial coordinates and area are crucial
         mandatory_cols = ['centroid_x', 'centroid_y', 'area_ha']
-        candidate_cols = [c for c in importances.index if c not in mandatory_cols][:12]
+        candidate_cols = [c for c in importances.index if c not in mandatory_cols][:8] # reduced to top 8 candidates to be even faster
         features_pool = mandatory_cols + candidate_cols
-        print("Candidate features:")
-        print(features_pool)
+        print("Candidate features:", features_pool, flush=True)
         
-        # Step 2: Search for best model & imputer using a baseline set of features (e.g. top 5 features)
+        # Step 2: Search for best model & imputer using baseline features
         baseline_feats = features_pool[:5]
         best_mse = float('inf')
         best_model_name = None
@@ -387,13 +370,11 @@ def run_search():
                     best_model_name = model_name
                     best_imputer = imp
                     
-        print(f"Top Candidate from baseline search: Model={best_model_name}, Imputer={best_imputer}, MSE={best_mse:.6f}")
+        print(f"Top Candidate from baseline: Model={best_model_name}, Imputer={best_imputer}, MSE={best_mse:.6f}", flush=True)
         
-        # Step 3: Run Greedy Forward Feature Selection for the best candidate model + imputer
-        # Start with empty feature set, but allow mandatory features or start completely greedy
+        # Step 3: Run Greedy Forward Feature Selection for the best model + imputer
         selected_feats = []
         best_ffs_mse = float('inf')
-        
         model_fn = models_pool[best_model_name]
         
         # Limit to max 6 features to avoid overfitting
@@ -413,12 +394,12 @@ def run_search():
             if step_best_mse < best_ffs_mse:
                 best_ffs_mse = step_best_mse
                 selected_feats.append(step_best_feat)
-                print(f"  FFS Step {step+1}: Added '{step_best_feat}' | MSE: {step_best_mse:.6f}")
+                print(f"  FFS Step {step+1}: Added '{step_best_feat}' | MSE: {step_best_mse:.6f}", flush=True)
             else:
-                print(f"  FFS Step {step+1}: No improvement. Stopping FFS.")
+                print(f"  FFS Step {step+1}: No improvement. Stopping FFS.", flush=True)
                 break
                 
-        # Step 4: Let's also evaluate the baseline features (using the current features in the pipeline) to compare
+        # Compare with the original configuration:
         baseline_selected = {
             'Rice_frac': ['bbox_width', 'area_ha', 'p50_20250619', 'p75_20250619', 'p25_20250619', 'mean_20250619'],
             'Cotton_frac': ['centroid_y', 'perimeter', 'diff_harvest', 'p75_20250814', 'mean_20250814', 'p50_20250814'],
@@ -427,16 +408,9 @@ def run_search():
             'Groundnut_frac': ['centroid_y', 'centroid_x', 'mean_local_std_20250606', 'mean_local_std_20250814', 'mean_local_std_20251013', 'cumulative_change']
         }
         
-        # Compare with the original configuration:
-        # Original configuration for Rice: RF_100, KNN_6, original features
-        # Cotton: RF_100 + CatBoost_50 (0.8 + 0.2), KNN_6, original features
-        # Maize: ET_100, KNN_6, original features
-        # Bajra: ET_100, spatial_1nn, original features
-        # Groundnut: RF_100, spatial_1nn, original features
-        
         orig_model_pool = {
             'Rice_frac': lambda: RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1),
-            'Cotton_frac': lambda: RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1), # simplified
+            'Cotton_frac': lambda: RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1),
             'Maize_frac': lambda: ExtraTreesRegressor(n_estimators=100, random_state=42, n_jobs=-1),
             'Bajra_frac': lambda: ExtraTreesRegressor(n_estimators=100, random_state=42, n_jobs=-1),
             'Groundnut_frac': lambda: RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
@@ -447,7 +421,7 @@ def run_search():
         }
         
         orig_mse = evaluate_lovo_cv_imputed(covered_df, target, baseline_selected[target], orig_model_pool[target], orig_imputer[target], geom_cols, sar_cols, all_cols)
-        print(f"Original Configuration MSE: {orig_mse:.6f}")
+        print(f"Original Configuration MSE: {orig_mse:.6f}", flush=True)
         
         best_configs[target] = {
             'model_name': best_model_name,
@@ -457,16 +431,16 @@ def run_search():
             'orig_mse': orig_mse
         }
         
-    print("\n\n========================================\nSUMMARY OF IMPROVEMENTS\n========================================")
+    print("\n\n========================================\nSUMMARY OF IMPROVEMENTS\n========================================", flush=True)
     for target in target_cols:
         cfg = best_configs[target]
-        print(f"Crop: {target}")
-        print(f"  Original MSE: {cfg['orig_mse']:.6f}")
-        print(f"  New Best MSE: {cfg['best_mse']:.6f} (Change: {(cfg['best_mse'] - cfg['orig_mse'])/cfg['orig_mse']*100:+.2f}%)")
-        print(f"  Best Model: {cfg['model_name']}")
-        print(f"  Best Imputer: {cfg['imputer']}")
-        print(f"  Best Features: {cfg['features']}")
-        print("-" * 40)
+        print(f"Crop: {target}", flush=True)
+        print(f"  Original MSE: {cfg['orig_mse']:.6f}", flush=True)
+        print(f"  New Best MSE: {cfg['best_mse']:.6f} (Change: {(cfg['best_mse'] - cfg['orig_mse'])/cfg['orig_mse']*100:+.2f}%)", flush=True)
+        print(f"  Best Model: {cfg['model_name']}", flush=True)
+        print(f"  Best Imputer: {cfg['imputer']}", flush=True)
+        print(f"  Best Features: {cfg['features']}", flush=True)
+        print("-" * 40, flush=True)
 
 if __name__ == '__main__':
     run_search()
