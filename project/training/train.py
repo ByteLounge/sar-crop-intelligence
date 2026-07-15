@@ -151,8 +151,8 @@ def run_pipeline():
     
     # 7. Model Training & Prediction using Crop-specific Selected Features (No coords to prevent spatial extrapolation errors!)
     selected_features = {
-        'Rice_frac': ['area_ha', 'bbox_width', 'ratio_veg', 'p50_20250619'],
-        'Cotton_frac': ['area_ha', 'perimeter', 'diff_harvest', 'mean_20250606', 'ratio_harvest'],
+        'Rice_frac': ['area_ha', 'bbox_width', 'diff_veg', 'p50_20250619'],
+        'Cotton_frac': ['area_ha', 'perimeter', 'diff_harvest', 'mean_20250606', 'mean_20250814'],
         'Maize_frac': ['area_ha', 'mean_sobel_20251013', 'mean_local_std_20250814', 'mean_local_std_20250606', 'mean_sobel_20250814'],
         'Bajra_frac': ['area_ha', 'p25_20250619', 'temporal_variance', 'p75_20250619', 'mean_local_std_20250619'],
         'Groundnut_frac': ['area_ha', 'perimeter', 'mean_local_std_20250814', 'mean_local_std_20250606', 'change_magnitude']
