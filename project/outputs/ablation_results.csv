@@ -1,0 +1,9 @@
+Ablation_Component,Hectares_MSE
+Add_Coordinates,4787.0490629615015
+Remove_Advanced_Features,4882.292342177674
+Full_Pipeline,4925.850241970323
+Remove_Clipping,4925.850241970323
+Remove_Normalisation,4960.133020372029
+Remove_KNN_Imputation,5353.145314638804
+Remove_Spatial_Imputation,6027.556466256483
+Remove_Hybrid_Imputation,6984.74401081437
