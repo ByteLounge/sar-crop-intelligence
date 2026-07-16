@@ -41,3 +41,11 @@ CAPELLA_C14_SM_SLC_HH_20250606072501_20250606072506/
 CAPELLA_C14_SM_SLC_HH_20250619021410_20250619021415/
 CAPELLA_C14_SM_SLC_HH_20250814031124_20250814031129/
 CAPELLA_C14_SM_SLC_HH_20251013022643_20251013022648/
+
+# Intermediate feature rasters and aligned images
+processed/
+aligned_images/
+preprocessed_images/
+pixel_features/
+models/
+project/models/

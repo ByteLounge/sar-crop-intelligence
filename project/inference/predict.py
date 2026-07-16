@@ -5,37 +5,73 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 from rasterio.features import rasterize
-import pickle
 import cv2
+import pickle
+import json
+from skimage.filters.rank import entropy as skimage_entropy
+from skimage.morphology import disk
+from skimage.filters import threshold_otsu
+from sklearn.preprocessing import StandardScaler
+from sklearn.mixture import GaussianMixture
+from sklearn.neighbors import KNeighborsRegressor
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from preprocessing.preprocess import align_rasters
-from features.extract import extract_geometry_features, extract_sar_features
+from features.extract import extract_geometry_features
+
+def lee_filter(img, size=5, sigma_v=0.25):
+    """
+    Apply standard Lee filter for speckle reduction in linear power domain.
+    """
+    img_mean = cv2.boxFilter(img, -1, (size, size))
+    img_sqr_mean = cv2.boxFilter(img**2, -1, (size, size))
+    img_variance = np.maximum(img_sqr_mean - img_mean**2, 0)
+    
+    # Noise variance based on relative standard deviation of speckle (sigma_v)
+    noise_variance = (img_mean * sigma_v)**2
+    
+    # Calculate weight K
+    img_weights = np.maximum(0.0, (img_variance - noise_variance) / (img_variance + 1e-10))
+    img_weights = np.minimum(img_weights, 1.0)
+    
+    # Filter image
+    img_filtered = img_mean + img_weights * (img - img_mean)
+    return img_filtered
 
 def run_inference():
-    print("Running inference from serialized checkpoints...")
+    print("Running inference from image-driven GMM models...")
     
     workspace_dir = r"D:\PC\resources"
     shp_path = os.path.join(workspace_dir, "villages_clean", "villages_clean.shp")
     gdf = gpd.read_file(shp_path)
     gdf_utm = gdf.to_crs("EPSG:32643")
     
-    df_geom = extract_geometry_features(gdf_utm)
-    
     aligned_dir = os.path.join(workspace_dir, "aligned_images")
     dates = ["20250606", "20250619", "20250814", "20251013"]
     tif_paths = [os.path.join(aligned_dir, f"capella_hh_{d}_10m.tif") for d in dates]
     
+    # Load and preprocess stack
     images = []
-    for p in tif_paths:
-        with rasterio.open(p) as src:
-            images.append(src.read(1))
+    for date, path in zip(dates, tif_paths):
+        with rasterio.open(path) as src:
+            dn_data = src.read(1)
             meta = src.meta.copy()
             
+        valid_mask = dn_data > 0
+        linear_data = np.zeros_like(dn_data, dtype=float)
+        linear_data[valid_mask] = 10.0 ** (dn_data[valid_mask] / 50.0)
+        
+        filtered_linear = lee_filter(linear_data, size=5, sigma_v=0.25)
+        
+        db_data = np.zeros_like(dn_data, dtype=np.uint8)
+        db_data[valid_mask] = np.clip(50.0 * np.log10(np.maximum(filtered_linear[valid_mask], 1e-5)), 0, 255).astype(np.uint8)
+        images.append(db_data)
+        
     stack = np.stack(images, axis=0)
     H, W = stack.shape[1], stack.shape[2]
     
+    # Create village mask and valid SAR swath mask
     shapes = [(row['geometry'], row['ID']) for idx, row in gdf_utm.iterrows()]
     village_mask = rasterize(
         shapes,
@@ -45,209 +81,232 @@ def run_inference():
         all_touched=True,
         dtype='int32'
     )
-    
-    flat_stack = stack.reshape(4, -1).T.astype(float)
-    flat_mask = village_mask.flatten()
-    
-    df_sar = extract_sar_features(gdf_utm, flat_stack, flat_mask, meta['transform'], H, W, dates)
-    
-    # Target label extraction is only needed to obtain observed crop fractions for the covered portions
-    in_village = flat_mask > 0
-    X_village = flat_stack[in_village]
-    village_ids = flat_mask[in_village]
-    
-    mean_vals = X_village.mean(axis=1)
-    min_vals = X_village.min(axis=1)
-    max_vals = X_village.max(axis=1)
-    is_water = (mean_vals < 20) & (max_vals < 40)
-    is_builtup = (mean_vals > 160) & (min_vals > 80)
-    is_veg = ~is_water & ~is_builtup
-    
-    X_veg = X_village[is_veg]
-    X_veg_mean = X_veg.mean(axis=1, keepdims=True)
-    X_veg_std = X_veg.std(axis=1, keepdims=True) + 1e-5
-    X_veg_norm = (X_veg - X_veg_mean) / X_veg_std
-    
-    from sklearn.cluster import KMeans
-    kmeans = KMeans(n_clusters=5, random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X_veg_norm)
-    
-    crop_mapping = {
-        0: 'Cotton_frac',
-        1: 'Groundnut_frac',
-        2: 'Maize_frac',
-        3: 'Rice_frac',
-        4: 'Bajra_frac'
-    }
-    
-    pixel_crops = np.full(len(X_village), -1, dtype=int)
-    pixel_crops[is_veg] = labels
-    
-    labels_list = []
-    for idx, row in gdf_utm.iterrows():
-        v_id = row['ID']
-        v_pixels = (village_ids == v_id)
-        v_crop_pixels = pixel_crops[v_pixels]
-        X_v = X_village[v_pixels]
-        is_nodata = (X_v == 0).all(axis=1)
-        n_valid = np.sum(~is_nodata)
-        
-        crop_fracs = {'ID': v_id}
-        for c_id, crop_name in crop_mapping.items():
-            if n_valid > 0:
-                count = np.sum(v_crop_pixels == c_id)
-                crop_fracs[crop_name] = count / n_valid
-            else:
-                crop_fracs[crop_name] = 0.0
-        labels_list.append(crop_fracs)
-        
-    df_labels = pd.DataFrame(labels_list)
-    df_data = pd.merge(df_geom, df_sar, on='ID')
-    df_data = pd.merge(df_data, df_labels, on='ID')
-    
-    total_px = [{'ID': row['ID'], 'total_pixels': np.sum(flat_mask == row['ID'])} for idx, row in gdf_utm.iterrows()]
-    df_total_px = pd.DataFrame(total_px)
-    df_data = pd.merge(df_data, df_total_px, on='ID')
-    df_data['coverage'] = df_data['valid_pixels'] / df_data['total_pixels']
-    
-    # Load Serialized Objects
-    models_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models'))
-    
-    with open(os.path.join(models_dir, "imputer_knn.pkl"), "rb") as f:
-        imputer_knn = pickle.load(f)
-    with open(os.path.join(models_dir, "nn_spatial.pkl"), "rb") as f:
-        nn = pickle.load(f)
-    with open(os.path.join(models_dir, "selected_features.pkl"), "rb") as f:
-        selected_features = pickle.load(f)
-        
-    geom_cols = ['centroid_x', 'centroid_y', 'area_ha', 'perimeter', 'compactness', 'bbox_width', 'bbox_height']
-    sar_cols = [c for c in df_sar.columns if c not in ['ID', 'valid_pixels']]
-    all_cols = geom_cols + sar_cols
-    
-    # Impute KNN (for Rice, Cotton, Maize)
-    df_final_knn = df_data.copy()
-    df_final_knn[all_cols] = imputer_knn.transform(df_data[all_cols])
-    
-    # Impute Spatial 1-NN (for Bajra, Groundnut)
-    df_final_spatial = df_data.copy()
-    train_indices = df_data[df_data['coverage'] > 0.35].index
-    zero_cov_indices = df_data[df_data['coverage'] <= 0.35].index
-    for idx in zero_cov_indices:
-        coord = df_data.loc[idx, ['centroid_x', 'centroid_y']].values.reshape(1, -1)
-        neighbor_idx = train_indices[nn.kneighbors(coord, return_distance=False)[0][0]]
-        df_final_spatial.loc[idx, sar_cols] = df_data.loc[neighbor_idx, sar_cols]
-        
-    target_cols = ['Rice_frac', 'Cotton_frac', 'Maize_frac', 'Bajra_frac', 'Groundnut_frac']
-    crop_names_ha = ['Rice_ha', 'Cotton_ha', 'Maize_ha', 'Bajra_ha', 'Groundnut_ha']
-    
-    final_predictions = {}
-    for target in target_cols:
-        features_t = selected_features[target]
-        
-        if target in ['Rice_frac', 'Cotton_frac', 'Maize_frac']:
-            df_all = df_final_knn
-        else:
-            df_all = df_final_spatial
-            
-        X_all_t = df_all[features_t].values
-        
-        # Load serialized ensemble checkpoint
-        with open(os.path.join(models_dir, f"ensemble_{target}.pkl"), "rb") as f:
-            ensemble = pickle.load(f)
-            
-        preds = ensemble.predict(X_all_t)
-        preds = np.clip(preds, 0.0, 1.0)
-        final_predictions[target] = preds
-        
-    # Calibrate predictions using estimated cultivated land area (added to fix the 5x overestimation flaw)
-    df_final = df_final_knn.copy()
-    cov = df_final['coverage'].values
-    
-    # 8a. Build the cultivated land mask from the stack (swath-covered areas)
-    mean_img = np.mean(stack, axis=0)
-    max_img = np.max(stack, axis=0)
-    var_img = np.var(stack, axis=0)
-    
-    # Local std of the temporal mean (texture filter)
-    local_mean = cv2.boxFilter(mean_img, -1, (3, 3))
-    local_sq_mean = cv2.boxFilter(mean_img**2, -1, (3, 3))
-    local_std = np.sqrt(np.maximum(local_sq_mean - local_mean**2, 0))
-    
-    # Local Shannon entropy of temporal mean
-    mean_uint8 = np.clip(mean_img, 0, 255).astype(np.uint8)
-    from skimage.filters.rank import entropy
-    from skimage.morphology import disk
-    entropy_img = entropy(mean_uint8, disk(3))
-    
-    # Swath valid mask
     valid_sar = (stack > 0).any(axis=0)
     
-    is_water = (mean_img < 25) & (max_img < 45)
-    is_builtup = (mean_img > 130) | (local_std > 12) | (entropy_img > 4.5)
-    potential_cropland = valid_sar & (~is_water) & (~is_builtup)
+    # Load combined cultivated mask
+    with rasterio.open(os.path.join(workspace_dir, "cultivated_mask.tif")) as src:
+        combined_mask = src.read(1)
+        
+    # Extract Feature Stack
+    diff_1 = np.zeros((H, W))
+    diff_2 = np.zeros((H, W))
+    diff_3 = np.zeros((H, W))
+    valid_all = (stack > 0).all(axis=0)
+    diff_1[valid_all] = stack[1, valid_all].astype(float) - stack[0, valid_all].astype(float)
+    diff_2[valid_all] = stack[2, valid_all].astype(float) - stack[1, valid_all].astype(float)
+    diff_3[valid_all] = stack[3, valid_all].astype(float) - stack[2, valid_all].astype(float)
     
-    # Variance threshold of 30.0 isolates active agricultural fields
-    is_active = (var_img >= 30)
-    cultivated_raw = potential_cropland & is_active
+    days = np.array([0, 13, 69, 129])
+    mean_days = days.mean()
+    denom = np.sum((days - mean_days)**2)
+    slope = np.zeros((H, W))
+    for idx in range(4):
+        slope += (days[idx] - mean_days) * stack[idx].astype(float)
+    slope /= denom
     
-    # Morphological processing
-    kernel_open = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    opened = cv2.morphologyEx(cultivated_raw.astype(np.uint8), cv2.MORPH_OPEN, kernel_open)
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel_close)
+    peak_val = np.max(stack, axis=0)
+    min_val = np.min(stack, axis=0)
+    max_val = np.max(stack, axis=0)
+    amplitude = max_val - min_val
+    temp_var = np.var(stack, axis=0)
     
-    # Filter out small connected components (noise)
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(closed, connectivity=8)
-    min_size = 5
-    mask_filtered = np.zeros_like(closed)
-    for i in range(1, num_labels):
-        if stats[i, cv2.CC_STAT_AREA] >= min_size:
-            mask_filtered[labels == i] = 1
-            
-    # Calculate observed cultivated fraction per village
-    df_final['Obs_cultivated_frac'] = 0.0
+    stack_linear = np.zeros_like(stack, dtype=float)
+    for i in range(4):
+        valid_m = stack[i] > 0
+        stack_linear[i, valid_m] = 10.0 ** (stack[i, valid_m] / 50.0)
+    sum_linear = np.sum(stack_linear, axis=0) + 1e-10
+    p_temp = stack_linear / sum_linear
+    temp_entropy = -np.sum(p_temp * np.log2(p_temp + 1e-10), axis=0)
+    
+    # GLCM (7)
+    mean_img = np.mean(stack, axis=0)
+    num_levels = 8
+    img_min, img_max = float(mean_img.min()), float(mean_img.max())
+    mean_img_quant = np.clip(((mean_img - img_min) / (img_max - img_min + 1e-5) * num_levels).astype(int), 0, num_levels - 1)
+    shifted = np.roll(np.roll(mean_img_quant, 1, axis=0), 1, axis=1)
+    mean_1 = cv2.boxFilter(mean_img_quant.astype(float), -1, (5, 5))
+    mean_2 = cv2.boxFilter(shifted.astype(float), -1, (5, 5))
+    var_1 = cv2.boxFilter(mean_img_quant.astype(float)**2, -1, (5, 5)) - mean_1**2
+    var_2 = cv2.boxFilter(shifted.astype(float)**2, -1, (5, 5)) - mean_2**2
+    std_1 = np.sqrt(np.maximum(var_1, 1e-5))
+    std_2 = np.sqrt(np.maximum(var_2, 1e-5))
+    
+    asm = np.zeros((H, W))
+    entropy = np.zeros((H, W))
+    contrast = np.zeros((H, W))
+    dissimilarity = np.zeros((H, W))
+    homogeneity = np.zeros((H, W))
+    correlation = np.zeros((H, W))
+    for g1 in range(num_levels):
+        mask1 = (mean_img_quant == g1)
+        for g2 in range(num_levels):
+            mask2 = (shifted == g2)
+            pair_mask = mask1 & mask2
+            p = cv2.boxFilter(pair_mask.astype(float), -1, (5, 5))
+            asm += p ** 2
+            p_safe = np.maximum(p, 1e-10)
+            entropy -= p_safe * np.log2(p_safe)
+            contrast += (g1 - g2) ** 2 * p
+            dissimilarity += np.abs(g1 - g2) * p
+            homogeneity += p / (1.0 + (g1 - g2) ** 2)
+            correlation += (g1 - mean_1) * (g2 - mean_2) * p / (std_1 * std_2)
+    energy = np.sqrt(asm)
+    
+    # Neighborhood (5)
+    mean_3x3 = cv2.boxFilter(mean_img.astype(float), -1, (3, 3))
+    mean_5x5 = cv2.boxFilter(mean_img.astype(float), -1, (5, 5))
+    local_sq_mean = cv2.boxFilter(mean_img.astype(float)**2, -1, (5, 5))
+    local_std = np.sqrt(np.maximum(local_sq_mean - mean_5x5**2, 0))
+    grad_x = cv2.Sobel(mean_img.astype(float), cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(mean_img.astype(float), cv2.CV_64F, 0, 1, ksize=3)
+    grad_mag = np.sqrt(grad_x**2 + grad_y**2)
+    edges = cv2.Canny(mean_img.astype(np.uint8), 30, 100)
+    edge_density = cv2.boxFilter((edges > 0).astype(float), -1, (7, 7))
+    
+    # Morphology (4)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    opening = cv2.morphologyEx(combined_mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+    closing = cv2.morphologyEx(combined_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+    dist_transform = cv2.distanceTransform(combined_mask.astype(np.uint8), cv2.DIST_L2, 5)
+    village_boundary_mask = (village_mask > 0).astype(np.uint8)
+    boundaries = cv2.Canny(village_boundary_mask, 0.5, 1.5)
+    boundary_dist = cv2.distanceTransform(255 - boundaries, cv2.DIST_L2, 5)
+    
+    feature_layers = [
+        stack[0], stack[1], stack[2], stack[3],
+        diff_1, diff_2, diff_3, slope, peak_val, min_val, max_val, amplitude, temp_var, temp_entropy,
+        contrast, correlation, energy, homogeneity, entropy, dissimilarity, asm,
+        mean_3x3, mean_5x5, local_std, grad_mag, edge_density,
+        opening, closing, dist_transform, boundary_dist
+    ]
+    feature_names = [
+        'raw_0', 'raw_1', 'raw_2', 'raw_3',
+        'diff_1', 'diff_2', 'diff_3', 'slope', 'peak_val', 'min_val', 'max_val', 'amplitude', 'temp_var', 'temp_entropy',
+        'glcm_contrast', 'glcm_correlation', 'glcm_energy', 'glcm_homogeneity', 'glcm_entropy', 'glcm_dissimilarity', 'glcm_asm',
+        'mean_3x3', 'mean_5x5', 'local_std', 'grad_mag', 'edge_density',
+        'opening', 'closing', 'dist_transform', 'boundary_dist'
+    ]
+    
+    in_villages = (village_mask > 0) & valid_sar
+    pixel_indices = np.where(in_villages)
+    N_pixels = len(pixel_indices[0])
+    
+    feature_matrix = np.zeros((N_pixels, len(feature_layers)), dtype=np.float32)
+    for idx, layer in enumerate(feature_layers):
+        feature_matrix[:, idx] = layer[in_villages]
+        
+    # Load Models
+    models_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'models'))
+    with open(os.path.join(models_dir, "cluster_scaler.pkl"), "rb") as f:
+        scaler = pickle.load(f)
+    with open(os.path.join(models_dir, "gmm_crop_model.pkl"), "rb") as f:
+        gmm_model = pickle.load(f)
+    with open(os.path.join(models_dir, "scaler_geom.pkl"), "rb") as f:
+        scaler_geom = pickle.load(f)
+    with open(os.path.join(models_dir, "cultivated_knn.pkl"), "rb") as f:
+        model_cult = pickle.load(f)
+    with open(os.path.join(models_dir, "spatial_crops_knn.pkl"), "rb") as f:
+        model_crops = pickle.load(f)
+        
+    # GMM clustering predictions
+    cult_indices = np.where(combined_mask[in_villages] > 0)[0]
+    X_cult = feature_matrix[cult_indices]
+    features_to_use = [
+        'raw_0', 'raw_1', 'raw_2', 'raw_3',
+        'diff_1', 'diff_2', 'diff_3', 'slope', 'amplitude', 'temp_var',
+        'glcm_contrast', 'glcm_homogeneity', 'local_std', 'grad_mag'
+    ]
+    indices_to_use = [feature_names.index(f) for f in features_to_use]
+    X_cluster = X_cult[:, indices_to_use].astype(np.float64)
+    X_scaled = scaler.transform(X_cluster)
+    labels_all = gmm_model.predict(X_scaled)
+    
+    pixel_village_ids_cult = village_mask[in_villages][cult_indices]
+    crop_mapping = {
+        3: 'Rice_ha',
+        0: 'Cotton_ha',
+        4: 'Maize_ha',
+        2: 'Bajra_ha',
+        1: 'Groundnut_ha'
+    }
+    crop_cols = ['Rice_ha', 'Cotton_ha', 'Maize_ha', 'Bajra_ha', 'Groundnut_ha']
+    
+    village_data = []
     for idx, row in gdf_utm.iterrows():
         v_id = row['ID']
+        geom = row['geometry']
         v_pixels = (village_mask == v_id)
-        n_cultivated = np.sum(v_pixels & (mask_filtered > 0))
-        area_ha = df_final.loc[df_final['ID'] == v_id, 'area_ha'].values[0]
-        df_final.loc[df_final['ID'] == v_id, 'Obs_cultivated_frac'] = (n_cultivated * 0.01) / area_ha if area_ha > 0 else 0.0
+        n_total_px = np.sum(v_pixels)
+        n_valid_px = np.sum(v_pixels & valid_sar)
+        coverage = n_valid_px / n_total_px if n_total_px > 0 else 0.0
         
-    # Load serialized cultivated KNN model
-    with open(os.path.join(models_dir, "cultivated_knn.pkl"), "rb") as f:
-        knn_cult = pickle.load(f)
+        centroid = geom.centroid
+        bounds = geom.bounds
+        compactness = 4 * np.pi * geom.area / (geom.length ** 2) if geom.length > 0 else 0.0
         
+        record = {
+            'ID': v_id,
+            'VILLAGE': row['VILLAGE'],
+            'area_ha': geom.area / 10000.0,
+            'centroid_x': centroid.x,
+            'centroid_y': centroid.y,
+            'perimeter': geom.length,
+            'compactness': compactness,
+            'bbox_width': bounds[2] - bounds[0],
+            'bbox_height': bounds[3] - bounds[1],
+            'coverage': coverage,
+            'valid_pixels': n_valid_px,
+            'total_pixels': n_total_px
+        }
+        n_cultivated = np.sum(v_pixels & (combined_mask > 0))
+        record['cultivated_mask_ha'] = n_cultivated * 0.01
+        
+        v_cult_labels = labels_all[(pixel_village_ids_cult == v_id)]
+        for c_id, c_name in crop_mapping.items():
+            record[f'pixel_{c_name}'] = np.sum(v_cult_labels == c_id) * 0.01
+        village_data.append(record)
+        
+    df_villages = pd.DataFrame(village_data)
+    
+    covered_df = df_villages[df_villages['coverage'] > 0.35].copy().reset_index(drop=True)
+    zero_df = df_villages[df_villages['coverage'] <= 0.35].copy().reset_index(drop=True)
+    
     geom_features = ['centroid_x', 'centroid_y', 'area_ha', 'perimeter', 'compactness', 'bbox_width', 'bbox_height']
-    X_all_c = df_final[geom_features].values
+    X_zero_geom = scaler_geom.transform(zero_df[geom_features])
+    zero_df['pred_cultivated_frac'] = np.clip(model_cult.predict(X_zero_geom), 0.0, 1.0)
+    zero_df['pred_cultivated_ha'] = zero_df['pred_cultivated_frac'] * zero_df['area_ha']
     
-    # Predict cultivated fraction
-    df_final['Pred_cultivated_frac'] = knn_cult.predict(X_all_c)
-    
-    # Blend observed mask fractions and spatial model predictions
-    estimated_cultivated_frac = cov * df_final['Obs_cultivated_frac'].values + (1.0 - cov) * df_final['Pred_cultivated_frac'].values
-    
-    # Blend crop fractions from models
-    blended_fracs = {}
-    for target in target_cols:
-        obs_val = df_final[target].values
-        pred_val = final_predictions[target]
-        blended_fracs[target] = cov * obs_val + (1.0 - cov) * pred_val
+    pred_crop_fracs = np.clip(model_crops.predict(X_zero_geom), 0.0, 1.0)
+    sum_pred_fracs = np.sum(pred_crop_fracs, axis=1, keepdims=True)
+    pred_crop_fracs = np.where(sum_pred_fracs > 0, pred_crop_fracs / sum_pred_fracs, 0.2)
+    for idx, c_name in enumerate(crop_cols):
+        zero_df[f'pred_{c_name}'] = pred_crop_fracs[:, idx] * zero_df['pred_cultivated_ha']
         
-    sum_blended = np.zeros(len(df_final))
-    for target in target_cols:
-        sum_blended += blended_fracs[target]
+    final_rows = []
+    for idx, row in df_villages.iterrows():
+        v_id = row['ID']
+        final_record = {'ID': v_id, 'VILLAGE': row['VILLAGE']}
+        if row['coverage'] > 0.35:
+            final_record['cultivated_area_ha'] = row['cultivated_mask_ha']
+            for c_name in crop_cols:
+                final_record[c_name] = row[f'pixel_{c_name}']
+        else:
+            zero_row = zero_df[zero_df['ID'] == v_id].iloc[0]
+            final_record['cultivated_area_ha'] = zero_row['pred_cultivated_ha']
+            for c_name in crop_cols:
+                final_record[c_name] = zero_row[f'pred_{c_name}']
+        final_rows.append(final_record)
         
-    # Apply calibrated post-processing normalization to the crop area predictions
-    for target, ha_name in zip(target_cols, crop_names_ha):
-        norm_frac = np.where(sum_blended > 0, blended_fracs[target] * estimated_cultivated_frac / sum_blended, 0.0)
-        df_final[ha_name] = norm_frac * df_final['area_ha']
-        
-    df_sub = df_final[['ID'] + crop_names_ha].sort_values('ID').reset_index(drop=True)
+    df_final = pd.DataFrame(final_rows)
+    df_sub = df_final[['ID'] + crop_cols].sort_values('ID').reset_index(drop=True)
     
-    # Output calibrated submission to submission_updated.csv
-    sub_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'submission_updated.csv'))
-    df_sub.to_csv(sub_path, index=False)
-    print(f"Regenerated calibrated submission written to: {sub_path}")
+    # Save both submission_final.csv and submission_generated.csv
+    for name in ["submission_final.csv", "submission_generated.csv"]:
+        out_sub_root = os.path.join(workspace_dir, name)
+        out_sub_proj = os.path.join(workspace_dir, "project", name)
+        df_sub.to_csv(out_sub_root, index=False)
+        df_sub.to_csv(out_sub_proj, index=False)
+        print(f"Inference successfully written to: {out_sub_root}")
 
 if __name__ == '__main__':
     run_inference()
