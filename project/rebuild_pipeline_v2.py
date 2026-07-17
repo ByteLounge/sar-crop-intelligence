@@ -692,7 +692,7 @@ def run_rich_feature_pipeline():
             norm_fracs = np.ones(5) / 5.0
             
         if cov > 0.35:
-            obs_fracs = np.array([row[f'pixel_{c}'] / (cult_ha + 1e-10) for c in crop_cols])
+            obs_fracs = np.array([row[c] / (cult_ha + 1e-10) for c in crop_cols])
             blended_fracs = cov * obs_fracs + (1.0 - cov) * norm_fracs
             blended_fracs = blended_fracs / np.sum(blended_fracs)
         else:
