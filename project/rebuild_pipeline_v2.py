@@ -356,6 +356,9 @@ def run_rich_feature_pipeline():
         n_valid = np.sum(~is_nodata)
         
         # Base features
+        n_total_px = np.sum(flat_mask == v_id)
+        coverage = n_valid / n_total_px if n_total_px > 0 else 0.0
+        
         v_feat = {
             'ID': v_id,
             'VILLAGE': row['VILLAGE'],
@@ -365,7 +368,8 @@ def run_rich_feature_pipeline():
             'perimeter': row['geometry'].length,
             'compactness': 4 * np.pi * row['geometry'].area / (row['geometry'].length**2) if row['geometry'].length > 0 else 0.0,
             'bbox_width': row['geometry'].bounds[2] - row['geometry'].bounds[0],
-            'bbox_height': row['geometry'].bounds[3] - row['geometry'].bounds[1]
+            'bbox_height': row['geometry'].bounds[3] - row['geometry'].bounds[1],
+            'coverage': coverage
         }
         
         # Field-level statistics
