@@ -494,6 +494,15 @@ def run_rich_feature_pipeline():
     pixel_indices = np.where(in_villages_p)
     N_pixels = len(pixel_indices[0])
     
+    # Compute slope_map
+    days = np.array([0, 13, 69, 129])
+    mean_days = days.mean()
+    denom = np.sum((days - mean_days)**2)
+    slope_map = np.zeros((H, W))
+    for idx in range(4):
+        slope_map += (days[idx] - mean_days) * stack[idx].astype(float)
+    slope_map /= denom
+
     feature_layers_p = [stack[0], stack[1], stack[2], stack[3],
                         stack[1].astype(float) - stack[0].astype(float),
                         stack[2].astype(float) - stack[1].astype(float),
