@@ -4,8 +4,8 @@ import sys
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from run_complete_pipeline import run_all_phases
+from rebuild_pipeline_v2 import run_rich_feature_pipeline
 
 if __name__ == '__main__':
-    print("Executing updated inference pipeline...")
-    run_all_phases()
+    print("Executing updated rich-feature inference pipeline...")
+    run_rich_feature_pipeline()
