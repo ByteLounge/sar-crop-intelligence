@@ -1,12 +1,12 @@
-# ANRF AISEHack 2.0 Pixel-level Crop Mapping Diagram
+# ANRF AISEHack 2.0 Classical Remote Sensing Crop Mapping Flow
 ```mermaid
 graph TD
-    A[Capella TIFFs & metadata] --> B[Stage 1: Preprocessing & Stack CRS Align]
-    B --> C[Stage 2 & 3: Agricultural Mask Segmentation]
-    C --> D[Stage 4: Feature Vector per Pixel]
-    D --> E[Stage 5: Learn Pixel PCA Embeddings]
-    E --> F[Stage 6 & 7: LightGBM Crop Discovery Classifier]
-    F --> G[Stage 8: Village Polygon Overlay & pixel -> ha]
-    G --> H[Stage 9: Proportional Constraints Normalization]
-    H --> I[Stage 12: Generate final submission.csv]
+    A[Capella HH multi-temp TIFFs] --> B[Stage 1: Calibrate & speckle filter coregistered stack]
+    B --> C[Stage 2: Agricultural Masking from Sentinel]
+    C --> D[Stage 3: Extract Pixel Temporal backscatter signatures]
+    D --> E[Stage 4 & 8: Hierarchical Rule Discovery & Optimization]
+    E --> F[Stage 5 & 6: Decision Tree Pixel Classification & Morphological Refinement]
+    F --> G[Stage 7: Village Overlay & Pixel-to-Hectare Conversion]
+    G --> H[Stage 9: Enforce Physical Crop Hectare Constraints]
+    H --> I[Stage 10: Export final rule-based submission.csv]
 ```
