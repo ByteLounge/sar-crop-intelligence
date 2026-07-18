@@ -210,18 +210,32 @@ def run_supervised_baseline_pipeline():
     df_data[all_feats] = df_data[all_feats].fillna(0)
     
     # Imputation for test
-    train_indices = df_data[df_data['coverage'] > 0.35].index
-    test_indices = df_data[df_data['coverage'] <= 0.35].index
+    train_indices = df_data[df_data['coverage'] > 0.05].index
+    test_indices = df_data[df_data['coverage'] <= 0.05].index
     train_coords = df_data.loc[train_indices, ['centroid_x', 'centroid_y']].values
     
-    nn_spatial = NearestNeighbors(n_neighbors=1)
+    nn_spatial = NearestNeighbors(n_neighbors=8)
     nn_spatial.fit(train_coords)
+    
+    feature_cols = db_cols + texture_cols + glcm_cols + edge_cols + morph_cols + temporal_cols + sentinel_cols
     
     for idx in test_indices:
         coord = df_data.loc[idx, ['centroid_x', 'centroid_y']].values.reshape(1, -1)
-        neighbor_idx = train_indices[nn_spatial.kneighbors(coord, return_distance=False)[0][0]]
-        df_data.loc[idx, db_cols + texture_cols + glcm_cols + edge_cols + morph_cols + temporal_cols + sentinel_cols] = \
-            df_data.loc[neighbor_idx, db_cols + texture_cols + glcm_cols + edge_cols + morph_cols + temporal_cols + sentinel_cols]
+        distances, indices = nn_spatial.kneighbors(coord)
+        
+        dists = distances[0]
+        neighbor_inds = [train_indices[j] for j in indices[0]]
+        
+        if dists[0] == 0:
+            df_data.loc[idx, feature_cols] = df_data.loc[neighbor_inds[0], feature_cols]
+        else:
+            weights = 1.0 / (dists + 1e-5)
+            weights /= weights.sum()
+            
+            weighted_feats = np.zeros(len(feature_cols))
+            for k_idx, n_idx in enumerate(neighbor_inds):
+                weighted_feats += weights[k_idx] * df_data.loc[n_idx, feature_cols].values
+            df_data.loc[idx, feature_cols] = weighted_feats
             
     # Selected feature sets
     best_features = {

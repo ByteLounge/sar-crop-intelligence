@@ -3,11 +3,11 @@
 
 ## 1. Validation Performance per Target
 LOVO cross-validation fractions MSE under the chosen candidate configuration:
-- **Rice_frac**: 0.000078
-- **Cotton_frac**: 0.000078
-- **Maize_frac**: 0.000078
-- **Bajra_frac**: 0.000078
-- **Groundnut_frac**: 0.000078
+- **Rice_frac**: 0.000033
+- **Cotton_frac**: 0.000033
+- **Maize_frac**: 0.000033
+- **Bajra_frac**: 0.000033
+- **Groundnut_frac**: 0.000033
 
 ## 2. Training Infrastructure
 - **Feature Imputation**: NearestNeighbor coordinate mapping for zero-coverage villages.
