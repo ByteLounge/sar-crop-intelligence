@@ -1,6 +1,6 @@
 Crop,BestModel,LOVO_MSE
-Rice_frac,CatBoost,2.950701969285075e-06
-Cotton_frac,ExtraTrees,0.00015663675709936972
-Maize_frac,ExtraTrees,5.532721403168346e-06
-Bajra_frac,ExtraTrees,1.7131104363139267e-05
-Groundnut_frac,ExtraTrees,8.019945206454199e-05
+Rice_frac,WeightedEnsemble,7.75868348412398e-05
+Cotton_frac,WeightedEnsemble,7.75868348412398e-05
+Maize_frac,WeightedEnsemble,7.75868348412398e-05
+Bajra_frac,WeightedEnsemble,7.75868348412398e-05
+Groundnut_frac,WeightedEnsemble,7.75868348412398e-05
