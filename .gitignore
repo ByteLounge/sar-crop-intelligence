@@ -49,3 +49,17 @@ preprocessed_images/
 pixel_features/
 models/
 project/models/
+
+# Large Datasets
+v_2/
+village_cropped_patches/
+aligned_images_recomputed/
+final_submission_archive/
+
+# Temporary prediction CSVs
+submission_*.csv
+submission (*).csv
+
+# Catboost info
+catboost_info/
+project/training/catboost_info/
