@@ -5,6 +5,32 @@
 [![Challenge](https://img.shields.io/badge/Challenge-ANRF_AISEHack_2.0-orange.svg)](https://www.anrf.gov.in/)
 [![Platform](https://img.shields.io/badge/Platform-Kaggle-blue.svg)](https://www.kaggle.com/)
 
+---
+
+# 🌾 Space Camera & Smart Guessing Robot (ELI5 Edition)
+
+Hey there! Welcome to our space agriculture project. Let's explain what we are doing here like we're playing a game!
+
+### 🗺️ The Map and the Hidden Toys
+Imagine we have a map with **29 villages** (like puzzle pieces). We want to find out how many hectares of different crops—like **Rice, Cotton, Maize, Bajra, and Groundnut**—are growing in each village. 
+
+### 🛰️ The Space Camera (Synthetic Aperture Radar)
+We have a super-cool space camera (satellite) that flies high in the sky. It can see right through thick rain clouds! But there's a catch: the camera only took pictures of **17 villages**. The other **12 villages** are completely in the dark! We have no pictures of them.
+
+### 🕵️ How do we know what crops are growing?
+1. **For the 17 villages with pictures**: We look at the photos over time. Crops have distinct habits:
+   * **Rice** loves water! Early in summer, it looks like a giant mirror (reflects less light) because the fields are flooded.
+   * **Cotton** grows very tall and bushy in August.
+   * **Groundnut** stays short and cozy near the soil.
+   We teach our computer to recognize these shapes and textures!
+2. **For the 12 villages in the dark**: We play a guessing game using their next-door neighbors! If a dark village is close to a light village that grows lots of Cotton, our smart robot guesses that the dark village does too.
+3. **The Robot Helpers (Machine Learning)**: We train friendly robot brains (models like **Extra Trees** and **CatBoost**) to look at the shapes of the villages and the patterns of their neighbors to make the best guess.
+4. **No Cheating Rules (Constraints)**: Finally, we double check everything! The crops cannot take up more space than the actual size of the village.
+
+By doing this, our robot helper makes super accurate guesses that are extremely close to the real answer!
+
+---
+
 An optimized, Kaggle Grandmaster-level hybrid spatial-temporal machine learning pipeline to estimate the acreage of five major crops (**Rice, Cotton, Maize, Bajra, and Groundnut**) across villages in Vadodara, Gujarat, India, using multi-temporal Capella Space high-resolution X-band SAR (Synthetic Aperture Radar) imagery. 
 
 This upgraded solution improves the baseline cross-validation performance by **85.85%** on average across all crops, transforming a Rank 119 submission into a highly competitive model expected to secure a **Top 15 placement** (Rank 10 - 25) on the Kaggle Leaderboard.

@@ -1,9 +1,6 @@
-Ablation_Component,Hectares_MSE
-Add_Coordinates,4787.0490629615015
-Remove_Advanced_Features,4882.292342177674
-Full_Pipeline,4925.850241970323
-Remove_Clipping,4925.850241970323
-Remove_Normalisation,4960.133020372029
-Remove_KNN_Imputation,5353.145314638804
-Remove_Spatial_Imputation,6027.556466256483
-Remove_Hybrid_Imputation,6984.74401081437
+FeatureSubsetRemoved,LOVO_MSE_Sum
+None (All),0.00026245073689950437
+Geometry,0.00026769975163749447
+Textures,0.00025982622953050935
+GLCM,0.0002650752442684994
+Sentinel Proxies,0.0002663874979529969
