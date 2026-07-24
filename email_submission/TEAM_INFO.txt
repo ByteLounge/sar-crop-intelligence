@@ -1,0 +1,17 @@
+Competition:
+ANRF AISEHack 2.0 Round 1 – SAR Crop Mapping Challenge
+
+Team Name:
+SHIELD
+
+Team Leader:
+Yash Sanikop
+
+Primary Notebook:
+Final_Notebook.ipynb
+
+Official Submission:
+submission_level2.csv
+
+Backup Submission:
+submission_robust.csv

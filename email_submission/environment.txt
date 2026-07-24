@@ -1,0 +1,32 @@
+================================================================================
+ANRF AISEHack 2.0 Round 1 - Execution Environment Details
+Team SHIELD | Submission Package
+================================================================================
+
+Python Version:
+  3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]
+
+Operating System:
+  OS Name     : Windows 11
+  OS Version  : 10.0.26200
+  Platform    : Windows-11-10.0.26200-SP0
+
+Architecture:
+  Machine     : AMD64
+  Processor   : Intel64 Family 6 Model 140 Stepping 1, GenuineIntel
+  Architecture: 64bit
+
+Important Library Versions:
+  numpy           : 2.4.4
+  pandas          : 3.0.2
+  scipy           : 1.17.1
+  scikit-learn    : 1.9.0
+  rasterio        : 1.5.0
+  geopandas       : 1.1.4
+  reportlab       : 5.0.0
+  pillow          : 12.2.0
+
+Notebook Execution Timestamp:
+  2026-07-24 23:21:39 UTC
+
+================================================================================

@@ -606,37 +606,40 @@ def run_all_phases():
     
     df_data = pd.merge(df_villages, df_sar, on='ID', suffixes=('', '_sar_feat'))
     
-    target_cols = ['Rice_frac', 'Cotton_frac', 'Maize_frac', 'Bajra_frac', 'Groundnut_frac']
-    for c in crop_cols:
-        frac_name = c.replace('_ha', '_frac')
-        df_data[frac_name] = df_data[f'pixel_{c}'] / (df_data['cultivated_mask_ha'] + 1e-10)
+    # Merge Sentinel Auxiliary Features
+    sentinel_csv = os.path.join(project_dir, "features", "sentinel_features.csv")
+    if os.path.exists(sentinel_csv):
+        df_sentinel = pd.read_csv(sentinel_csv)
+        df_data = pd.merge(df_data, df_sentinel.drop(columns=['VILLAGE'], errors='ignore'), on='ID')
+        print("Successfully merged Sentinel auxiliary features into pipeline dataset.")
         
     imputer = KNNImputer(n_neighbors=3)
     df_data_imputed = df_data.copy()
-    df_data_imputed[all_features] = imputer.fit_transform(df_data[all_features])
     
-    print("Spatial KNN Imputation successfully completed for all zero-coverage villages.")
+    # Fill any NaNs in Sentinel columns with column mean for LOVO evaluation
+    num_cols = df_data_imputed.select_dtypes(include=[np.number]).columns
+    df_data_imputed[num_cols] = df_data_imputed[num_cols].fillna(df_data_imputed[num_cols].mean())
     
     crop_configs = {
         'Rice_frac': {
-            'features': ['centroid_x', 'centroid_y', 'ratio_veg', 'diff_sowing'],
-            'model': Ridge(alpha=0.1, random_state=42)
+            'features': ['centroid_x', 'centroid_y', 'S2_NDVI_Aug14', 'S2_EVI_Aug14', 'vegetation_integral', 'ratio_veg', 'diff_sowing'],
+            'model': ExtraTreesRegressor(n_estimators=100, max_depth=5, random_state=42)
         },
         'Cotton_frac': {
-            'features': ['centroid_y', 'centroid_x', 'diff_harvest', 'mean_20250606', 'temporal_variance'],
-            'model': BayesianRidge()
+            'features': ['centroid_y', 'centroid_x', 'S2_NDVI_Aug14', 'S2_EVI_Aug14', 'S1_VV_Aug14', 'diff_harvest', 'mean_20250606', 'temporal_variance'],
+            'model': ExtraTreesRegressor(n_estimators=100, max_depth=5, random_state=42)
         },
         'Maize_frac': {
-            'features': ['centroid_y', 'centroid_x', 'mean_sobel_20251013', 'mean_local_std_20250814', 'cumulative_change'],
-            'model': Ridge(alpha=0.01, random_state=42)
+            'features': ['centroid_y', 'centroid_x', 'S2_NDVI_Aug14', 'S2_EVI_June06', 'mean_sobel_20251013', 'mean_local_std_20250814', 'cumulative_change'],
+            'model': ExtraTreesRegressor(n_estimators=100, max_depth=5, random_state=42)
         },
         'Bajra_frac': {
-            'features': ['p25_20250619', 'centroid_x', 'centroid_y', 'temporal_variance', 'p75_20250619'],
-            'model': ElasticNet(alpha=0.1, l1_ratio=0.7, random_state=42)
+            'features': ['S2_NDVI_June06', 'S2_EVI_June06', 'p25_20250619', 'centroid_x', 'centroid_y', 'temporal_variance', 'p75_20250619'],
+            'model': ExtraTreesRegressor(n_estimators=100, max_depth=5, random_state=42)
         },
         'Groundnut_frac': {
-            'features': ['centroid_x', 'centroid_y', 'area_ha', 'temporal_variance'],
-            'model': KNeighborsRegressor(n_neighbors=3, weights='distance')
+            'features': ['centroid_x', 'centroid_y', 'area_ha', 'S2_NDVI_Aug14', 'S2_EVI_Aug14', 'temporal_variance'],
+            'model': ExtraTreesRegressor(n_estimators=100, max_depth=5, random_state=42)
         }
     }
     
